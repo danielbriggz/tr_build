@@ -15,3 +15,6 @@ build/
 .pytest_cache/
 .coverage
 Installer/Files/
+output/
+.env
+Transcrire-Setup.exe

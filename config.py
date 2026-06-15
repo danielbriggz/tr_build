@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     GROQ_MAX_RETRIES: int = 3
 
     # Gemini
-    GEMINI_MODEL: str = "gemini-1.5-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash"
     GEMINI_MAX_RETRIES: int = 3
 
 

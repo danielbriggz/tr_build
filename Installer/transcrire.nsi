@@ -21,7 +21,7 @@ SetCompressor     /SOLID lzma
 !define APP_VERSION "0.1.0"
 !define APP_GUID    "{D4A2F3B1-9C7E-4E8A-A2D1-0F3C5B7E9D2A}"
 !define PYTHON_VER  "3.12"
-!define PYTHON_MIN  "3.12.0"
+!define PYTHON_MIN  "3.12.5"
 
 ; -- MUI Pages -----------------------------------------------------------------
 !define MUI_ABORTWARNING
@@ -96,22 +96,22 @@ Section "Transcrire" SEC_MAIN
 
     ; -- Integrity checks -------------------------------------------------------
     DetailPrint "Verifying installer integrity..."
-    !insertmacro CheckFileHash "$EXEDIR\files\python-3.12.0-amd64.exe" "PYTHON_CRC_PLACEHOLDER"
-    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"              "FFMPEG_CRC_PLACEHOLDER"
+    !insertmacro CheckFileHash "$EXEDIR\files\python-3.12.0-amd64.exe" "E6458322"
+    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"              "04745F1E"
 
     ; -- Python detection + silent install -------------------------------------
     DetailPrint "Checking for Python ${PYTHON_VER}..."
     ReadRegStr $0 HKLM "SOFTWARE\Python\PythonCore\${PYTHON_VER}\InstallPath" ""
     ${If} $0 == ""
         DetailPrint "Python ${PYTHON_VER} not found -- installing silently..."
-        File "files\python-3.12.0-amd64.exe"
-        ExecWait '"$INSTDIR\python-3.12.0-amd64.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1' $0
+        File "files\python-3.12.5-amd64.exe"
+        ExecWait '"$INSTDIR\python-3.12.5-amd64.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1' $0
         ${If} $0 != 0
             MessageBox MB_ICONSTOP "Python installation failed (exit code $0). Please install Python ${PYTHON_VER} manually and retry."
             Abort
         ${EndIf}
         DetailPrint "Python installed."
-        Delete "$INSTDIR\python-3.12.0-amd64.exe"
+        Delete "$INSTDIR\python-3.12.5-amd64.exe"
     ${Else}
         DetailPrint "Python ${PYTHON_VER} found at $0 -- skipping."
     ${EndIf}
