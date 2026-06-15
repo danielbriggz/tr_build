@@ -8,7 +8,7 @@ Usage:
 import binascii, pathlib, re
 
 FILES = {
-    "PYTHON_CRC_PLACEHOLDER": "files/python-3.12.0-amd64.exe",
+    "PYTHON_CRC_PLACEHOLDER": "files/python-3.12.5-amd64.exe",
     "FFMPEG_CRC_PLACEHOLDER":  "files/ffmpeg.exe",
 }
 
