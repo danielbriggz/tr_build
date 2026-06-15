@@ -1,0 +1,27 @@
+[project]
+name = "transcrire"
+version = "0.1.0"
+description = "Podcast content pipeline — transcription, captions, and social images."
+requires-python = ">=3.12"
+dependencies = [
+    "groq>=0.9.0",
+    "google-genai>=0.8.0",
+    "feedparser>=6.0.11",
+    "httpx>=0.27.0",
+    "Pillow>=10.4.0",
+    "tenacity>=8.5.0",
+    "typer>=0.12.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+transcrire = "cli.main:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cli", "core", "domain", "services", "storage"]
