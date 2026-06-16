@@ -80,7 +80,7 @@ def stage_transcribe(episode: Episode, config: PipelineConfig) -> StageResult:
 
     slug    = slugify(episode.title)
     out_dir = folder / "transcripts"
-    paths   = write_transcript_files(segments, words, formatted_plain, out_dir, slug)
+    paths = write_transcript_files(segments, formatted_plain, out_dir, slug)
 
     result = StageResult(
         id=None, episode_id=episode.id, stage="transcribe",

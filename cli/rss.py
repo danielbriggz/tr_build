@@ -43,7 +43,7 @@ def cmd_fetch(
     slug  = slugify(title)
     folder = settings.BASE_OUTPUT_DIR / slug
 
-    cover_art_url = rss_service.get_cover_art_url(feed) or ""
+    cover_art_url = rss_service.get_cover_art_url(entry, feed) or ""
     audio_url     = rss_service.get_audio_url(entry) or ""
 
     if not audio_url:

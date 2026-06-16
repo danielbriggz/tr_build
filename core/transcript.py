@@ -23,18 +23,6 @@ def format_segments(segments: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def format_words(words: list[dict]) -> str:
-    """
-    Build a word-level timestamped transcript.
-    Format: [HH:MM:SS.mmm] word
-    """
-    lines = []
-    for w in words:
-        ts = format_timestamp(w["start"])
-        lines.append(f"[{ts}] {w['word'].strip()}")
-    return "\n".join(lines)
-
-
 # ── Paragraph segmentation ───────────────────────────────────────────────────
 
 def segment_by_silence(segments: list[dict], threshold: float = 2.0) -> str:
@@ -74,25 +62,18 @@ def segment_by_silence(segments: list[dict], threshold: float = 2.0) -> str:
 
 def write_transcript_files(
     segments: list[dict],
-    words: list[dict],
-    plain_text: str,          # Gemini-formatted plain transcript
+    plain_text: str,
     output_dir: Path,
     episode_slug: str,
 ) -> dict[str, Path]:
-    """
-    Write all three transcript variants to disk.
-    Returns a dict of {variant: path}.
-    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     paths = {
         "timestamped": output_dir / f"{episode_slug}_timestamped.txt",
         "plain": output_dir / f"{episode_slug}_plain.txt",
-        "words": output_dir / f"{episode_slug}_words.txt",
     }
 
     paths["timestamped"].write_text(format_segments(segments), encoding="utf-8")
     paths["plain"].write_text(plain_text, encoding="utf-8")
-    paths["words"].write_text(format_words(words), encoding="utf-8")
 
     return paths

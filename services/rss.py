@@ -52,6 +52,9 @@ def get_audio_url(entry: dict) -> str | None:
     return None
 
 
-def get_cover_art_url(feed: feedparser.FeedParserDict) -> str | None:
-    """Extract feed-level cover art URL."""
+def get_cover_art_url(entry: dict, feed: feedparser.FeedParserDict) -> str | None:
+    """Extract episode-level cover art, falling back to feed-level if not found."""
+    episode_image = entry.get("image", {}).get("href")
+    if episode_image:
+        return episode_image
     return feed.feed.get("image", {}).get("href")
