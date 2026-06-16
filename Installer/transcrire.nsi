@@ -96,7 +96,7 @@ Section "Transcrire" SEC_MAIN
 
     ; -- Integrity checks -------------------------------------------------------
     DetailPrint "Verifying installer integrity..."
-    !insertmacro CheckFileHash "$EXEDIR\files\python-3.12.0-amd64.exe" "E6458322"
+    !insertmacro CheckFileHash "$EXEDIR\files\python-3.12.5-amd64.exe" "E6458322"
     !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"              "04745F1E"
 
     ; -- Python detection + silent install -------------------------------------
