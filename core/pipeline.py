@@ -73,7 +73,6 @@ def stage_transcribe(episode: Episode, config: PipelineConfig) -> StageResult:
 
     response = transcribe_groq(compressed, diarize=config.diarize)
     segments = response.get("segments", [])
-    words    = response.get("words", [])
 
     raw_plain       = segment_by_silence(segments, threshold=settings.SILENCE_THRESHOLD)
     formatted_plain = format_transcript_paragraphs(raw_plain)
