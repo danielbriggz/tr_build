@@ -101,8 +101,9 @@ def stage_captions(episode: Episode, config: PipelineConfig) -> StageResult:
     transcript_text = Path(tx_result.output_path).read_text(encoding="utf-8")
     captions = generate_captions(transcript_text, config.selected_platforms, episode.spotify_url)
 
-    folder   = Path(episode.folder_path)
-    out_path = folder / "captions" / "captions.json"
+    folder  = Path(episode.folder_path)
+    version = ep_store.get_next_version(episode.id, "captions")
+    out_path = folder / "captions" / f"captions_v{version}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(captions, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -110,6 +111,7 @@ def stage_captions(episode: Episode, config: PipelineConfig) -> StageResult:
         id=None, episode_id=episode.id, stage="captions",
         status=StageStatus.SUCCESS, output_path=str(out_path),
         metadata={"platforms": [p.slug for p in config.selected_platforms]},
+        version=version,
     )
     ep_store.upsert_stage_result(result)
     return result

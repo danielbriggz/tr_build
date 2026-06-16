@@ -4,7 +4,7 @@ from rich.table import Table
 
 app = typer.Typer(
     name="transcrire",
-    help="Podcast content pipeline — transcription, captions, and social images.",
+    help="Podcast content pipeline — transcription, and captions",
     no_args_is_help=True,
 )
 console = Console()

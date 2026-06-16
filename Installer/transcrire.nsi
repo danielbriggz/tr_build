@@ -1,7 +1,7 @@
 ; ============================================================
 ; Transcrire Installer -- NSIS Script
 ; Targets: Windows 10/11 x64
-; Bundles: Python 3.12, ffmpeg, app source
+; Bundles: Python 3.12, ffmpeg, app source, pre-built venv
 ; ============================================================
 
 !include "MUI2.nsh"
@@ -20,8 +20,6 @@ SetCompressor     /SOLID lzma
 !define APP_NAME    "Transcrire"
 !define APP_VERSION "0.1.0"
 !define APP_GUID    "{D4A2F3B1-9C7E-4E8A-A2D1-0F3C5B7E9D2A}"
-!define PYTHON_VER  "3.12"
-!define PYTHON_MIN  "3.12.5"
 
 ; -- MUI Pages -----------------------------------------------------------------
 !define MUI_ABORTWARNING
@@ -96,30 +94,13 @@ Section "Transcrire" SEC_MAIN
 
     ; -- Integrity checks -------------------------------------------------------
     DetailPrint "Verifying installer integrity..."
-    !insertmacro CheckFileHash "$EXEDIR\files\python-3.12.5-amd64.exe" "E6458322"
-    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"              "04745F1E"
-
-    ; -- Python detection + silent install -------------------------------------
-    DetailPrint "Checking for Python ${PYTHON_VER}..."
-    ReadRegStr $0 HKLM "SOFTWARE\Python\PythonCore\${PYTHON_VER}\InstallPath" ""
-    ${If} $0 == ""
-        DetailPrint "Python ${PYTHON_VER} not found -- installing silently..."
-        File "files\python-3.12.5-amd64.exe"
-        ExecWait '"$INSTDIR\python-3.12.5-amd64.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1' $0
-        ${If} $0 != 0
-            MessageBox MB_ICONSTOP "Python installation failed (exit code $0). Please install Python ${PYTHON_VER} manually and retry."
-            Abort
-        ${EndIf}
-        DetailPrint "Python installed."
-        Delete "$INSTDIR\python-3.12.5-amd64.exe"
-    ${Else}
-        DetailPrint "Python ${PYTHON_VER} found at $0 -- skipping."
-    ${EndIf}
+    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"  "04745F1E"
+    !insertmacro CheckFileHash "$EXEDIR\files\ffprobe.exe" "04745F1E"
 
     ; -- ffmpeg ----------------------------------------------------------------
     DetailPrint "Installing ffmpeg..."
     CreateDirectory "$INSTDIR\bin"
-    File "/oname=$INSTDIR\bin\ffmpeg.exe" "files\ffmpeg.exe"
+    File "/oname=$INSTDIR\bin\ffmpeg.exe"  "files\ffmpeg.exe"
     File "/oname=$INSTDIR\bin\ffprobe.exe" "files\ffprobe.exe"
 
     ; Add ffmpeg to system PATH
@@ -137,13 +118,17 @@ Section "Transcrire" SEC_MAIN
     File    "..\config.py"
     File    "..\pyproject.toml"
 
-    ; -- Install Python dependencies via pip -----------------------------------
-    DetailPrint "Installing Python dependencies..."
-    ExecWait 'python -m pip install --quiet -r "$INSTDIR\requirements.txt"' $0
-    ${If} $0 != 0
-        MessageBox MB_ICONSTOP "Dependency installation failed. Check your internet connection and retry."
-        Abort
-    ${EndIf}
+    ; -- Pre-built venv --------------------------------------------------------
+    DetailPrint "Installing Python environment (no internet required)..."
+    File /r "..\venv_dist"
+    Rename "$INSTDIR\venv_dist" "$INSTDIR\.venv"
+
+    ; Rewrite the venv's pyvenv.cfg to point to the new install location
+    FileOpen $1 "$INSTDIR\.venv\pyvenv.cfg" w
+    FileWrite $1 "home = $INSTDIR\.venv\Scripts$\r$\n"
+    FileWrite $1 "include-system-site-packages = false$\r$\n"
+    FileWrite $1 "version = 3.12$\r$\n"
+    FileClose $1
 
     ; -- Write .env ------------------------------------------------------------
     DetailPrint "Writing .env..."
@@ -151,7 +136,6 @@ Section "Transcrire" SEC_MAIN
     FileWrite $1 "GROQ_API_KEY=$GroqKey$\r$\n"
     FileWrite $1 "GEMINI_API_KEY=$GeminiKey$\r$\n"
     FileWrite $1 "BASE_OUTPUT_DIR=$INSTDIR\output$\r$\n"
-    FileWrite $1 "FONTS_DIR=$INSTDIR\assets\fonts$\r$\n"
     FileClose $1
 
     ; -- transcrire.cmd launcher -----------------------------------------------
@@ -159,7 +143,7 @@ Section "Transcrire" SEC_MAIN
     FileOpen $1 "$INSTDIR\transcrire.cmd" w
     FileWrite $1 "@echo off$\r$\n"
     FileWrite $1 "cd /d $\"$INSTDIR$\"$\r$\n"
-    FileWrite $1 "python -m cli.main %*$\r$\n"
+    FileWrite $1 "$\"$INSTDIR\.venv\Scripts\python.exe$\" -m cli.main %*$\r$\n"
     FileClose $1
 
     ; -- Start menu shortcut ---------------------------------------------------
@@ -171,7 +155,6 @@ Section "Transcrire" SEC_MAIN
     WriteRegStr HKLM "Software\Transcrire" "InstallDir" "$INSTDIR"
     WriteRegStr HKLM "Software\Transcrire" "Version"    "${APP_VERSION}"
 
-    ; Add/Remove Programs entry
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_GUID}" \
         "DisplayName"     "${APP_NAME} ${APP_VERSION}"
     WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_GUID}" \
@@ -193,13 +176,13 @@ SectionEnd
 
 ; -- Uninstaller ---------------------------------------------------------------
 Section "Uninstall"
-    ; Remove app files
     RMDir /r "$INSTDIR\domain"
     RMDir /r "$INSTDIR\core"
     RMDir /r "$INSTDIR\services"
     RMDir /r "$INSTDIR\storage"
     RMDir /r "$INSTDIR\cli"
     RMDir /r "$INSTDIR\assets"
+    RMDir /r "$INSTDIR\.venv"
     RMDir /r "$INSTDIR\bin"
     Delete "$INSTDIR\config.py"
     Delete "$INSTDIR\pyproject.toml"
@@ -219,5 +202,5 @@ Section "Uninstall"
     DeleteRegKey HKLM "Software\Transcrire"
     DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_GUID}"
 
-    MessageBox MB_ICONINFORMATION "Transcrire has been uninstalled.$\n$\nYour output folder was not deleted."
+    MessageBox MB_ICONINFORMATION "Transcrire has been uninstalled.$\nYour output folder was not deleted."
 SectionEnd

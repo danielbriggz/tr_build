@@ -1,5 +1,4 @@
 import logging
-import json
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -23,6 +22,91 @@ def _get_logger(name: str) -> logging.Logger:
 logger = _get_logger(__name__)
 
 
+# ── Platform rules ────────────────────────────────────────────────────────────
+
+PLATFORM_RULES: dict[str, str] = {
+    "ig_story": """\
+Write 5 captions for an Instagram Story slide.
+- Each caption is a single punchy sentence or question (max 12 words)
+- Conversational and bold — written like you are talking directly to someone
+- No hashtags
+- No emoji""",
+
+    "ig_portrait": """\
+Write 5 captions for an Instagram feed post.
+- Each caption is 2-4 sentences long
+- Hook the reader in the first sentence
+- Conversational tone — warm, direct, relatable
+- End each caption with 3-5 relevant hashtags on a new line
+- No emoji""",
+
+    "twitter": """\
+Write 5 tweets.
+- Each tweet is a single punchy statement or question
+- Hard limit: 240 characters per tweet (strictly enforced)
+- No hashtags — Twitter reach does not depend on them
+- No emoji
+- Opinions, provocations, and hot takes work well here""",
+
+    "linkedin": """\
+Write 5 LinkedIn posts.
+- Each post is 80-120 words
+- Start with a strong hook line, then develop the idea in short paragraphs
+- Professional but human tone — not corporate speak
+- End with a reflective question to drive comments
+- Max 2 relevant hashtags at the very end
+- No emoji""",
+}
+
+DEFAULT_RULES = """\
+Write 5 captions for a social media post.
+- Each caption is 2-4 sentences
+- Punchy, direct, and engaging
+- No emoji"""
+
+
+# ── Prompt builders ───────────────────────────────────────────────────────────
+
+def build_prompt(transcript: str, platform: Platform, spotify_url: str | None = None) -> str:
+    """Build a platform-specific caption generation prompt."""
+    rules = PLATFORM_RULES.get(platform.slug, DEFAULT_RULES)
+    spotify_line = f"\nSpotify link to include as CTA where appropriate: {spotify_url}" if spotify_url else ""
+
+    return f"""\
+You are a social media copywriter for a podcast called "Volatile Times with Daniel" — \
+a Nigerian podcast about relationships, identity, masculinity, mental health, and culture.
+
+Platform: {platform.name}
+
+{rules}
+
+Use plain text only — no markdown, no asterisks, no special characters.
+Each caption must feel distinct — vary the angle, hook, and framing across the 5.
+Draw directly from the ideas, arguments, and quotes in the transcript below.
+{spotify_line}
+
+Transcript:
+{transcript[:4000]}
+
+Return exactly 5 captions, numbered 1–5. No preamble or commentary.\
+"""
+
+
+def build_reference_prompt(transcript: str, references: list[str]) -> str:
+    """Build a prompt to generate a reference list from a transcript."""
+    ref_block = "\n".join(f"- {r}" for r in references) if references else "(none provided)"
+    return f"""\
+You are a research assistant for a podcast.
+From the transcript below, identify and list all books, articles, people,
+tools, studies, or resources mentioned. Format as a clean numbered list.
+Previously noted references:
+{ref_block}
+Transcript:
+{transcript}
+Return only the numbered list. No preamble.\
+"""
+
+
 # ── Data types ────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -43,41 +127,6 @@ class CaptionBundle:
 
     def to_dict(self) -> dict[str, list[str]]:
         return {slug: r.captions for slug, r in self.results.items()}
-
-
-# ── Prompt builders ───────────────────────────────────────────────────────────
-
-def build_prompt(transcript: str, platform: Platform, spotify_url: str | None = None) -> str:
-    """Build a caption generation prompt for a given platform."""
-    spotify_line = f"\nSpotify link: {spotify_url}" if spotify_url else ""
-    return f"""\
-Each caption should:
-- Be punchy and attention-grabbing
-- Match the tone of the episode
-- Include relevant hashtags
-- Be platform-appropriate in length
-- Use plain text only — no emoji or special characters
-
-Transcript:
-{transcript[:4000]}
-{spotify_line}
-Return exactly 5 captions, numbered 1–5. No preamble or commentary.\
-"""
-
-
-def build_reference_prompt(transcript: str, references: list[str]) -> str:
-    """Build a prompt to generate a reference list from a transcript."""
-    ref_block = "\n".join(f"- {r}" for r in references) if references else "(none provided)"
-    return f"""\
-You are a research assistant for a podcast.
-From the transcript below, identify and list all books, articles, people,
-tools, studies, or resources mentioned. Format as a clean numbered list.
-Previously noted references:
-{ref_block}
-Transcript:
-{transcript}
-Return only the numbered list. No preamble.\
-"""
 
 
 # ── Generation ────────────────────────────────────────────────────────────────
@@ -148,8 +197,19 @@ def _parse_numbered_list(text: str) -> list[str]:
     """Extract items from a numbered list response."""
     lines = text.strip().splitlines()
     captions = []
+    current: list[str] = []
+
     for line in lines:
         line = line.strip()
-        if line and line[0].isdigit() and "." in line[:3]:
-            captions.append(line.split(".", 1)[1].strip())
+        # Match "1." or "1" alone on a line as a caption separator
+        if line and line[0].isdigit() and (line in [str(i) for i in range(1, 10)] or (len(line) <= 3 and line.rstrip(".").isdigit())):
+            if current:
+                captions.append("\n\n".join(current).strip())
+                current = []
+        elif line:
+            current.append(line)
+
+    if current:
+        captions.append("\n\n".join(current).strip())
+
     return captions
