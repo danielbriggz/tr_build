@@ -17,3 +17,4 @@ Installer/Files/
 output/
 .env
 Transcrire-Setup.exe
+venv_dist

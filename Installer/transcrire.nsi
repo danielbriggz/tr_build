@@ -120,7 +120,7 @@ Section "Transcrire" SEC_MAIN
 
     ; -- Pre-built venv --------------------------------------------------------
     DetailPrint "Installing Python environment (no internet required)..."
-    File /r "..\venv_dist"
+    File /r "venv_dist"
     Rename "$INSTDIR\venv_dist" "$INSTDIR\.venv"
 
     ; Rewrite the venv's pyvenv.cfg to point to the new install location
