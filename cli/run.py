@@ -1,8 +1,6 @@
 import typer
 from rich.console import Console
-from typing import Optional
 from domain import PLATFORMS, PipelineConfig
-from storage import episodes as ep_store
 from storage.db import init_db
 from core.pipeline import run_pipeline, rerun_stage, get_available_actions
 
@@ -42,7 +40,7 @@ def cmd_run(
 @app.command("rerun")
 def cmd_rerun(
     episode_id: int = typer.Argument(..., help="Episode ID."),
-    stage: str = typer.Argument(..., help="Stage to rerun: fetch | transcribe | captions | images"),
+    stage: str = typer.Argument(..., help="Stage to rerun: fetch | transcribe | captions"),
     diarize: bool = typer.Option(False, "--diarize", help="Enable diarization (transcribe stage only)."),
 ) -> None:
     """Rerun a single stage. Archives the previous output first."""
@@ -89,10 +87,10 @@ def _get_episode_or_exit(episode_id: int):
 
 
 def _prompt_platform_selection() -> list:
-    console.print("\n[bold]Select platforms for image generation:[/bold]")
+    console.print("\n[bold]Select platforms for caption generation:[/bold]")
     platform_list = list(PLATFORMS.values())
     for i, p in enumerate(platform_list):
-        console.print(f"  [cyan]{i + 1}.[/cyan] {p.name} ({p.width}x{p.height})")
+        console.print(f"  [cyan]{i + 1}.[/cyan] {p.name}")
 
     raw = typer.prompt("Enter numbers separated by commas (e.g. 1,3)", default="1,2,3,4")
     selected = []

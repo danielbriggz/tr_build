@@ -24,7 +24,7 @@ class StageResult:
     """Output of a single pipeline stage for one episode."""
     id: int | None
     episode_id: int
-    stage: str                  # "fetch" | "transcribe" | "captions" | "images"
+    stage: str                  # "fetch" | "transcribe" | "captions"
     status: StageStatus
     output_path: str | None     # path to primary output file
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -42,6 +42,6 @@ class PipelineConfig:
     diarize: bool = False
     selected_platforms: list[Platform] = field(default_factory=list)
     stages: list[str] = field(default_factory=lambda: [
-        "fetch", "transcribe", "captions", "images"
+        "fetch", "transcribe", "captions"
     ])
     rerun_stage: str | None = None  # if set, only this stage reruns
