@@ -11,7 +11,6 @@ from services.gemini import format_transcript_paragraphs
 from services.rss import download_file
 from core.transcript import segment_by_silence, write_transcript_files
 from core.captions import generate_captions
-from core.images import generate_images
 from storage import episodes as ep_store
 from storage.archives import archive_stage_output
 
@@ -116,39 +115,12 @@ def stage_captions(episode: Episode, config: PipelineConfig) -> StageResult:
     return result
 
 
-# ── Stage: images ─────────────────────────────────────────────────────────────
-
-def stage_images(episode: Episode, config: PipelineConfig) -> StageResult:
-    cap_result   = ep_store.get_latest_stage_result(episode.id, "captions")
-    fetch_result = ep_store.get_latest_stage_result(episode.id, "fetch")
-    if not cap_result or not fetch_result:
-        raise RuntimeError("Captions and fetch stages must complete before image generation.")
-
-    captions      = json.loads(Path(cap_result.output_path).read_text(encoding="utf-8"))
-    cover_art_path = Path(fetch_result.metadata["cover_art_path"])
-
-    folder  = Path(episode.folder_path)
-    slug    = slugify(episode.title)
-    out_dir = folder / "images"
-
-    paths = generate_images(captions, cover_art_path, out_dir, slug, config.selected_platforms)
-
-    result = StageResult(
-        id=None, episode_id=episode.id, stage="images",
-        status=StageStatus.SUCCESS, output_path=str(out_dir),
-        metadata={"platforms": {s: [str(p) for p in pl] for s, pl in paths.items()}},
-    )
-    ep_store.upsert_stage_result(result)
-    return result
-
-
 # ── Pipeline orchestrator ─────────────────────────────────────────────────────
 
 STAGE_RUNNERS = {
     "fetch":      stage_fetch,
     "transcribe": stage_transcribe,
     "captions":   stage_captions,
-    "images":     stage_images,
 }
 
 
@@ -196,7 +168,6 @@ def get_available_actions(episode_id: int) -> list[str]:
     fetch = results.get("fetch")
     tx    = results.get("transcribe")
     caps  = results.get("captions")
-    imgs  = results.get("images")
 
     if not fetch or fetch.status == StageStatus.FAILED:
         actions.append("fetch")
@@ -216,14 +187,6 @@ def get_available_actions(episode_id: int) -> list[str]:
             actions.append("re-generate-captions")
             if not caps.reviewed:
                 actions.append("review-captions")
-
-    if caps and caps.status == StageStatus.SUCCESS:
-        if not imgs or imgs.status == StageStatus.FAILED:
-            actions.append("generate-images")
-        else:
-            actions.append("re-generate-images")
-            if not imgs.reviewed:
-                actions.append("review-images")
 
     actions.append("view-history")
     return actions
