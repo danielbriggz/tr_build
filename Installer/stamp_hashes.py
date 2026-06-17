@@ -1,28 +1,45 @@
 """
 Run this before compiling the NSIS installer.
-Computes CRC32 hashes of bundled binaries and stamps them into transcrire.nsi.
+Computes MD5 hashes of bundled binaries and stamps them into transcrire.nsi.
 
 Usage:
     python stamp_hashes.py
 """
-import binascii, pathlib, re
+import hashlib
+import pathlib
+import re
 
+# Map: filename (as it appears in the !insertmacro CheckFileHash call) -> local path
 FILES = {
-    "PYTHON_CRC_PLACEHOLDER": "files/python-3.12.5-amd64.exe",
-    "FFMPEG_CRC_PLACEHOLDER":  "files/ffmpeg.exe",
+    "ffmpeg.exe":  "files/ffmpeg.exe",
+    "ffprobe.exe": "files/ffprobe.exe",
 }
 
 nsi_path = pathlib.Path("transcrire.nsi")
 nsi = nsi_path.read_text(encoding="utf-8")
 
-for placeholder, filepath in FILES.items():
+for filename, filepath in FILES.items():
     p = pathlib.Path(filepath)
     if not p.exists():
-        print(f"[skip] {filepath} not found — placeholder left as-is.")
+        print(f"[skip] {filepath} not found.")
         continue
-    crc = format(binascii.crc32(p.read_bytes()) & 0xFFFFFFFF, "08X")
-    nsi = nsi.replace(placeholder, crc)
-    print(f"[ok]   {filepath} → CRC32 {crc}")
+
+    md5 = hashlib.md5(p.read_bytes()).hexdigest()
+
+    # Match the existing CheckFileHash line for this file and replace its hash.
+    # Line looks like:
+    #   !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"  "84c88770b93c4582ac0bd542691b3884"
+    pattern = re.compile(
+        r'(!insertmacro CheckFileHash "\$EXEDIR\\files\\' + re.escape(filename) + r'"\s+")[0-9a-fA-F]{32}(")'
+    )
+
+    new_nsi, count = pattern.subn(rf"\g<1>{md5}\g<2>", nsi)
+    if count == 0:
+        print(f"[warn] No CheckFileHash line found for {filename} — hash not stamped.")
+        continue
+
+    nsi = new_nsi
+    print(f"[ok]   {filepath} -> MD5 {md5}")
 
 nsi_path.write_text(nsi, encoding="utf-8")
 print("\nHashes stamped into transcrire.nsi.")
