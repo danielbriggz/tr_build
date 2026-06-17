@@ -30,6 +30,9 @@ SetCompressor     /SOLID lzma
 !insertmacro MUI_PAGE_DIRECTORY
 Page custom PageAPIKeys PageAPIKeysLeave
 !insertmacro MUI_PAGE_INSTFILES
+
+!define MUI_FINISHPAGE_RUN "$INSTDIR\transcrire.cmd"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch Transcrire now"
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -74,53 +77,14 @@ FunctionEnd
 Function PageAPIKeysLeave
     ${NSD_GetText} $GroqField $GroqKey
     ${NSD_GetText} $GeminiField $GeminiKey
-
-    ; -- Trim whitespace from both keys ------------------------------------------
-    ; (basic trim: NSIS has no built-in trim, so we just check raw length/content)
-
-    ${If} $GroqKey == ""
-        MessageBox MB_ICONEXCLAMATION "Please enter your Groq API key.$\nYou can find it at console.groq.com."
-        Abort
-    ${EndIf}
-
-    ${If} $GeminiKey == ""
-        MessageBox MB_ICONEXCLAMATION "Please enter your Gemini API key.$\nYou can find it at aistudio.google.com."
-        Abort
-    ${EndIf}
-
-    StrLen $R0 $GroqKey
-    ${If} $R0 < 20
-        MessageBox MB_ICONEXCLAMATION "Your Groq API key looks too short to be valid.$\nPlease double-check and re-enter it."
-        Abort
-    ${EndIf}
-
-    StrLen $R0 $GeminiKey
-    ${If} $R0 < 20
-        MessageBox MB_ICONEXCLAMATION "Your Gemini API key looks too short to be valid.$\nPlease double-check and re-enter it."
-        Abort
-    ${EndIf}
 FunctionEnd
 
 ; -- Integrity check helper ----------------------------------------------------
-; Runs certutil, writes its output to a temp file, then uses NSIS's built-in
-; line search to grab the hash line. Avoids manual string-parsing macros
-; and avoids any third-party plugin (no hang risk).
-!macro CheckFileHash FILE EXPECTED_MD5
-    GetTempFileName $9
-    nsExec::ExecToLog 'cmd /c certutil -hashfile "${FILE}" MD5 > "$9"'
+!macro CheckFileHash FILE EXPECTED_CRC
+    VPatch::GetFileCRC32 "${FILE}"
     Pop $0
-
-    FileOpen $8 "$9" r
-    FileRead $8 $7   ; line 1: "MD5 hash of ...:"
-    FileRead $8 $7   ; line 2: the hash itself
-    FileClose $8
-    Delete "$9"
-
-    ; Trim trailing CRLF/whitespace
-    StrCpy $7 $7 -2
-
-    ${If} $7 != "${EXPECTED_MD5}"
-        MessageBox MB_ICONSTOP "Integrity check failed for ${FILE}.$\nExpected: ${EXPECTED_MD5}$\nGot: $7$\nThe installer may be corrupted. Please re-download."
+    ${If} $0 != "${EXPECTED_CRC}"
+        MessageBox MB_ICONSTOP "Integrity check failed for ${FILE}.$\nThe installer may be corrupted. Please re-download."
         Abort
     ${EndIf}
 !macroend
@@ -131,20 +95,10 @@ Section "Transcrire" SEC_MAIN
 
     SetOutPath "$INSTDIR"
 
-; -- Disk space check ------------------------------------------------------
-    DetailPrint "Checking available disk space..."
-    ${GetRoot} "$INSTDIR" $R0
-    ${DriveSpace} "$R0" "/D=F /S=M" $R1   ; free space in MB
-
-    ${If} $R1 < 600
-        MessageBox MB_ICONSTOP "Not enough disk space.$\nTranscrire needs at least 600 MB free on $R0$\nAvailable: $R1 MB$\n$\nPlease free up space and run the installer again."
-        Abort
-    ${EndIf}
-
     ; -- Integrity checks -------------------------------------------------------
     DetailPrint "Verifying installer integrity..."
-    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"  "84c88770b93c4582ac0bd542691b3884"
-    !insertmacro CheckFileHash "$EXEDIR\files\ffprobe.exe" "5ac1c823904fce6ac1430b19a0974f7e"
+    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"  "04745F1E"
+    !insertmacro CheckFileHash "$EXEDIR\files\ffprobe.exe" "04745F1E"
 
     ; -- ffmpeg ----------------------------------------------------------------
     DetailPrint "Installing ffmpeg..."
@@ -195,10 +149,11 @@ Section "Transcrire" SEC_MAIN
     FileWrite $1 "$\"$INSTDIR\.venv\Scripts\python.exe$\" -m cli.main %*$\r$\n"
     FileClose $1
 
-    ; -- Start menu shortcut ---------------------------------------------------
+    ; -- Shortcuts ---------------------------------------------------------------
     CreateDirectory "$SMPROGRAMS\Transcrire"
-    CreateShortcut "$SMPROGRAMS\Transcrire\Transcrire.lnk" "$INSTDIR\transcrire.cmd"
+    CreateShortcut "$SMPROGRAMS\Transcrire\Transcrire.lnk" "$INSTDIR\transcrire.cmd" "" "$INSTDIR\assets\icon.ico"
     CreateShortcut "$SMPROGRAMS\Transcrire\Uninstall.lnk"  "$INSTDIR\Uninstall.exe"
+    CreateShortcut "$DESKTOP\Transcrire.lnk" "$INSTDIR\transcrire.cmd" "" "$INSTDIR\assets\icon.ico"
 
     ; -- Registry entries ------------------------------------------------------
     WriteRegStr HKLM "Software\Transcrire" "InstallDir" "$INSTDIR"
@@ -246,6 +201,9 @@ Section "Uninstall"
 
     ; Remove start menu
     RMDir /r "$SMPROGRAMS\Transcrire"
+
+    ; Remove desktop shortcut
+    Delete "$DESKTOP\Transcrire.lnk"
 
     ; Remove registry
     DeleteRegKey HKLM "Software\Transcrire"

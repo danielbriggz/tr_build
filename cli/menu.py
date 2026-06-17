@@ -36,6 +36,32 @@ STAGE_RUNNERS = {
 }
 
 
+# ── Error formatting ──────────────────────────────────────────────────────────
+
+def _friendly_error_message(error: Exception) -> str:
+    """
+    Unwrap tenacity's RetryError to surface the actual underlying exception,
+    and return its message directly if it's a known, user-friendly error type
+    (e.g. GeminiQuotaExceeded). Falls back to a generic message otherwise.
+    """
+    from services.gemini import GeminiQuotaExceeded
+
+    # tenacity.RetryError wraps a concurrent.futures.Future in last_attempt
+    last_attempt = getattr(error, "last_attempt", None)
+    if last_attempt is not None:
+        try:
+            underlying = last_attempt.exception()
+        except Exception:
+            underlying = None
+        if underlying is not None:
+            error = underlying
+
+    if isinstance(error, GeminiQuotaExceeded):
+        return str(error)
+
+    return str(error) or error.__class__.__name__
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def run_menu() -> None:
@@ -87,7 +113,7 @@ def _pc_upload_flow() -> None:
         for label, path in paths.items():
             console.print(f"     {label}: {path}")
     except Exception as e:
-        console.print(f"\n  [red]❌ Transcription failed: {e}[/red]")
+        console.print(f"\n  [red]❌ Transcription failed:[/red] {_friendly_error_message(e)}")
 
     typer.prompt("\n  Press Enter to return to menu", default="")
 
@@ -269,7 +295,7 @@ def _run_stage_with_retry(episode: Episode, config: PipelineConfig, stage: str) 
             else:
                 raise RuntimeError(result.error or "Stage returned non-success status.")
         except Exception as e:
-            console.print(f"  [red]❌ {stage} failed: {e}[/red]")
+            console.print(f"  [red]❌ {stage} failed:[/red] {_friendly_error_message(e)}")
             if attempt < MAX_RETRIES:
                 retry = typer.confirm(f"  Retry {stage}?", default=True)
                 if not retry:
