@@ -73,13 +73,14 @@ def stage_transcribe(episode: Episode, config: PipelineConfig) -> StageResult:
 
     response = transcribe_groq(compressed, diarize=config.diarize)
     segments = response.get("segments", [])
+    words    = response.get("words", [])
 
     raw_plain       = segment_by_silence(segments, threshold=settings.SILENCE_THRESHOLD)
     formatted_plain = format_transcript_paragraphs(raw_plain)
 
     slug    = slugify(episode.title)
     out_dir = folder / "transcripts"
-    paths = write_transcript_files(segments, formatted_plain, out_dir, slug)
+    paths   = write_transcript_files(segments, words, formatted_plain, out_dir, slug)
 
     result = StageResult(
         id=None, episode_id=episode.id, stage="transcribe",
@@ -100,9 +101,8 @@ def stage_captions(episode: Episode, config: PipelineConfig) -> StageResult:
     transcript_text = Path(tx_result.output_path).read_text(encoding="utf-8")
     captions = generate_captions(transcript_text, config.selected_platforms, episode.spotify_url)
 
-    folder  = Path(episode.folder_path)
-    version = ep_store.get_next_version(episode.id, "captions")
-    out_path = folder / "captions" / f"captions_v{version}.json"
+    folder   = Path(episode.folder_path)
+    out_path = folder / "captions" / "captions.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(captions, indent=2, ensure_ascii=False), encoding="utf-8")
 
@@ -110,10 +110,11 @@ def stage_captions(episode: Episode, config: PipelineConfig) -> StageResult:
         id=None, episode_id=episode.id, stage="captions",
         status=StageStatus.SUCCESS, output_path=str(out_path),
         metadata={"platforms": [p.slug for p in config.selected_platforms]},
-        version=version,
     )
     ep_store.upsert_stage_result(result)
     return result
+
+
 
 
 # ── Pipeline orchestrator ─────────────────────────────────────────────────────
@@ -170,24 +171,82 @@ def get_available_actions(episode_id: int) -> list[str]:
     tx    = results.get("transcribe")
     caps  = results.get("captions")
 
-    if not fetch or fetch.status == StageStatus.FAILED:
-        actions.append("fetch")
-    else:
-        actions.append("re-fetch")
-
-    if fetch and fetch.status == StageStatus.SUCCESS:
-        if not tx or tx.status == StageStatus.FAILED:
-            actions.append("transcribe")
-        else:
-            actions.append("re-transcribe")
-
-    if tx and tx.status == StageStatus.SUCCESS:
-        if not caps or caps.status == StageStatus.FAILED:
-            actions.append("generate-captions")
-        else:
-            actions.append("re-generate-captions")
-            if not caps.reviewed:
-                actions.append("review-captions")
-
     actions.append("view-history")
     return actions
+
+
+# ── Stage: transcribe (PC upload) ─────────────────────────────────────────────
+
+def stage_transcribe_pc(audio_path: str, diarize: bool = False) -> str:
+    """
+    Transcribe a local audio file directly — no episode in DB required.
+    Compresses, transcribes, formats, and saves to pc_transcripts/.
+    Returns the path to the saved transcript.
+    """
+    from pathlib import Path
+    from slugify import slugify
+    from services.audio import compress_for_groq
+    from services.groq import transcribe_groq
+    from services.gemini import format_transcript_paragraphs
+    from core.transcript import segment_by_silence, write_transcript_files
+    from config import settings
+
+    src = Path(audio_path)
+    if not src.exists():
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    out_dir = settings.BASE_OUTPUT_DIR / "pc_transcripts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    compressed = out_dir / "_compressed.mp3"
+    compress_for_groq(src, compressed)
+
+    response  = transcribe_groq(compressed, diarize=diarize)
+    segments  = response.get("segments", [])
+
+    raw_plain       = segment_by_silence(segments, threshold=settings.SILENCE_THRESHOLD)
+    formatted_plain = format_transcript_paragraphs(raw_plain)
+
+    slug  = slugify(src.stem)
+    paths = write_transcript_files(segments, formatted_plain, out_dir, slug)
+
+    compressed.unlink(missing_ok=True)
+
+    return str(paths["plain"])
+
+
+# ── Stage: transcribe (PC upload) ─────────────────────────────────────────────
+
+def stage_transcribe_pc(audio_path: str, diarize: bool = False) -> dict:
+    """
+    Transcribe a local audio file directly — no episode DB entry needed.
+    Saves output to pc_transcripts/ and returns paths dict.
+    """
+    from pathlib import Path
+    from services.audio import compress_for_groq
+    from services.groq import transcribe_groq
+    from services.gemini import format_transcript_paragraphs
+    from core.transcript import segment_by_silence, write_transcript_files
+    from config import settings
+    from slugify import slugify
+
+    src       = Path(audio_path)
+    slug      = slugify(src.stem)
+    out_dir   = settings.BASE_OUTPUT_DIR / "pc_transcripts" / slug
+    compressed = out_dir / "compressed.mp3"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    compress_for_groq(src, compressed)
+
+    response  = transcribe_groq(compressed, diarize=diarize)
+    segments  = response.get("segments", [])
+
+    raw_plain       = segment_by_silence(segments, threshold=settings.SILENCE_THRESHOLD)
+    formatted_plain = format_transcript_paragraphs(raw_plain)
+
+    paths = write_transcript_files(segments, formatted_plain, out_dir, slug)
+
+    # Clean up compressed file
+    compressed.unlink(missing_ok=True)
+
+    return {k: str(v) for k, v in paths.items()}

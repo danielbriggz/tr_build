@@ -29,3 +29,84 @@ def compress_for_groq(input_path: Path, output_path: Path) -> Path:
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg compression failed:\n{result.stderr}")
     return output_path
+
+
+def pick_file_dialog() -> str | None:
+    """
+    Open a Windows file picker dialog and return the selected file path.
+    Returns None if the user cancels.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()        # hide the empty root window
+        root.wm_attributes("-topmost", True)  # dialog appears on top
+
+        path = filedialog.askopenfilename(
+            title="Select audio file",
+            filetypes=[
+                ("Audio files", "*.mp3 *.wav *.m4a *.flac *.ogg"),
+                ("All files",   "*.*"),
+            ],
+        )
+        root.destroy()
+        return path or None
+
+    except Exception as e:
+        raise RuntimeError(f"File picker failed: {e}")
+
+
+def pick_file_dialog() -> str | None:
+    """
+    Open a Windows file picker dialog and return the selected file path.
+    Returns None if the user cancels.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()       # hide the empty root window
+        root.wm_attributes("-topmost", True)  # bring picker to front
+
+        path = filedialog.askopenfilename(
+            title="Select audio file",
+            filetypes=[
+                ("Audio files", "*.mp3 *.wav *.m4a *.flac *.ogg"),
+                ("All files",   "*.*"),
+            ],
+        )
+        root.destroy()
+        return path or None
+
+    except Exception as e:
+        raise EnvironmentError(f"Could not open file picker: {e}")
+
+
+def pick_file_dialog() -> str | None:
+    """
+    Open a Windows file picker dialog and return the selected file path.
+    Returns None if the user cancels.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+
+        path = filedialog.askopenfilename(
+            title="Select audio file",
+            filetypes=[
+                ("Audio files", "*.mp3 *.wav *.m4a *.flac *.ogg"),
+                ("All files",   "*.*"),
+            ],
+        )
+        root.destroy()
+        return path or None
+
+    except Exception as e:
+        raise RuntimeError(f"File picker failed: {e}")

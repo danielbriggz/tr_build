@@ -11,6 +11,8 @@ from core.pipeline import (
     stage_fetch, stage_transcribe, stage_captions,
 )
 from services.rss import load_feed, check_new_episodes, get_audio_url, get_cover_art_url
+from services.audio import pick_file_dialog
+from core.pipeline import stage_transcribe_pc
 from config import settings
 from slugify import slugify
 import datetime
@@ -40,15 +42,56 @@ def run_menu() -> None:
     init_db()
 
     while True:
-        episode = _select_episode()
-        if episode is None:
+        _print_header()
+        console.print("  [cyan]1.[/cyan]  Podcast RSS feed")
+        console.print("  [cyan]2.[/cyan]  Upload from PC  [dim](transcription only)[/dim]")
+        console.print("  [cyan]0.[/cyan]  Exit\n")
+
+        choice = typer.prompt("Select", default="0")
+
+        if choice == "0":
             console.print("\nGoodbye! 👋")
             raise typer.Exit()
-
-        _episode_loop(episode)
+        elif choice == "1":
+            episode = _select_episode()
+            if episode:
+                _episode_loop(episode)
+        elif choice == "2":
+            _pc_upload_flow()
+        else:
+            console.print("[yellow]Invalid choice.[/yellow]")
 
 
 # ── Episode selection ─────────────────────────────────────────────────────────
+def _pc_upload_flow() -> None:
+    """Pick a local audio file and transcribe it directly."""
+    console.print("\n  Opening file picker...")
+    try:
+        audio_path = pick_file_dialog()
+    except RuntimeError as e:
+        console.print(f"  [red]{e}[/red]")
+        return
+
+    if not audio_path:
+        console.print("  [yellow]No file selected.[/yellow]")
+        return
+
+    console.print(f"  [cyan]Selected:[/cyan] {audio_path}")
+
+    diarize = typer.confirm("  Enable speaker labelling (diarization)?", default=False)
+
+    console.print("\n  [bold]Transcribing...[/bold]")
+    try:
+        paths = stage_transcribe_pc(audio_path, diarize=diarize)
+        console.print(f"\n  [green]✅ Done.[/green]")
+        for label, path in paths.items():
+            console.print(f"     {label}: {path}")
+    except Exception as e:
+        console.print(f"\n  [red]❌ Transcription failed: {e}[/red]")
+
+    typer.prompt("\n  Press Enter to return to menu", default="")
+
+
 
 def _select_episode() -> Episode | None:
     episodes = list_episodes()
