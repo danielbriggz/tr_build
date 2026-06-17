@@ -194,22 +194,11 @@ Return only the single caption text, no numbering.\
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _parse_numbered_list(text: str) -> list[str]:
-    """Extract items from a numbered list response."""
-    lines = text.strip().splitlines()
-    captions = []
-    current: list[str] = []
-
-    for line in lines:
-        line = line.strip()
-        # Match "1." or "1" alone on a line as a caption separator
-        if line and line[0].isdigit() and (line in [str(i) for i in range(1, 10)] or (len(line) <= 3 and line.rstrip(".").isdigit())):
-            if current:
-                captions.append("\n\n".join(current).strip())
-                current = []
-        elif line:
-            current.append(line)
-
-    if current:
-        captions.append("\n\n".join(current).strip())
-
-    return captions
+    """
+    Extract captions from a numbered list response.
+    Handles the standard Gemini format: '1. Caption text on same line'
+    including multi-line captions where continuation lines follow.
+    """
+    import re
+    items = re.split(r'\n\s*\d+\.\s+', '\n' + text.strip())
+    return [item.strip() for item in items if item.strip()]
