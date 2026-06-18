@@ -11,8 +11,7 @@ import re
 
 # Map: filename (as it appears in the !insertmacro CheckFileHash call) -> local path
 FILES = {
-    "ffmpeg.exe":  "files/ffmpeg.exe",
-    "ffprobe.exe": "files/ffprobe.exe",
+    "ffmpeg.exe": "files/ffmpeg.exe",
 }
 
 nsi_path = pathlib.Path("transcrire.nsi")
@@ -26,9 +25,6 @@ for filename, filepath in FILES.items():
 
     md5 = hashlib.md5(p.read_bytes()).hexdigest()
 
-    # Match the existing CheckFileHash line for this file and replace its hash.
-    # Line looks like:
-    #   !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"  "84c88770b93c4582ac0bd542691b3884"
     pattern = re.compile(
         r'(!insertmacro CheckFileHash "\$EXEDIR\\files\\' + re.escape(filename) + r'"\s+")[0-9a-fA-F]{32}(")'
     )

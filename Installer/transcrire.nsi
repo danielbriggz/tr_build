@@ -1,7 +1,7 @@
 ; ============================================================
 ; Transcrire Installer -- NSIS Script
 ; Targets: Windows 10/11 x64
-; Bundles: Python 3.12, ffmpeg, app source, pre-built venv
+; Bundles: ffmpeg, app source, pre-built venv
 ; ============================================================
 
 !include "MUI2.nsh"
@@ -77,14 +77,49 @@ FunctionEnd
 Function PageAPIKeysLeave
     ${NSD_GetText} $GroqField $GroqKey
     ${NSD_GetText} $GeminiField $GeminiKey
+
+    ${If} $GroqKey == ""
+        MessageBox MB_ICONEXCLAMATION "Please enter your Groq API key.$\nYou can find it at console.groq.com."
+        Abort
+    ${EndIf}
+
+    ${If} $GeminiKey == ""
+        MessageBox MB_ICONEXCLAMATION "Please enter your Gemini API key.$\nYou can find it at aistudio.google.com."
+        Abort
+    ${EndIf}
+
+    StrLen $R0 $GroqKey
+    ${If} $R0 < 20
+        MessageBox MB_ICONEXCLAMATION "Your Groq API key looks too short to be valid.$\nPlease double-check and re-enter it."
+        Abort
+    ${EndIf}
+
+    StrLen $R0 $GeminiKey
+    ${If} $R0 < 20
+        MessageBox MB_ICONEXCLAMATION "Your Gemini API key looks too short to be valid.$\nPlease double-check and re-enter it."
+        Abort
+    ${EndIf}
 FunctionEnd
 
 ; -- Integrity check helper ----------------------------------------------------
-!macro CheckFileHash FILE EXPECTED_CRC
-    VPatch::GetFileCRC32 "${FILE}"
+; Runs certutil, writes its output to a temp file, then uses NSIS's built-in
+; file read to grab the hash line. No third-party plugin (no hang risk).
+!macro CheckFileHash FILE EXPECTED_MD5
+    GetTempFileName $9
+    nsExec::ExecToLog 'cmd /c certutil -hashfile "${FILE}" MD5 > "$9"'
     Pop $0
-    ${If} $0 != "${EXPECTED_CRC}"
-        MessageBox MB_ICONSTOP "Integrity check failed for ${FILE}.$\nThe installer may be corrupted. Please re-download."
+
+    FileOpen $8 "$9" r
+    FileRead $8 $7   ; line 1: "MD5 hash of ...:"
+    FileRead $8 $7   ; line 2: the hash itself
+    FileClose $8
+    Delete "$9"
+
+    ; Trim trailing CRLF
+    StrCpy $7 $7 -2
+
+    ${If} $7 != "${EXPECTED_MD5}"
+        MessageBox MB_ICONSTOP "Integrity check failed for ${FILE}.$\nExpected: ${EXPECTED_MD5}$\nGot: $7$\nThe installer may be corrupted. Please re-download."
         Abort
     ${EndIf}
 !macroend
@@ -95,16 +130,24 @@ Section "Transcrire" SEC_MAIN
 
     SetOutPath "$INSTDIR"
 
-    ; -- Integrity checks -------------------------------------------------------
+    ; -- Disk space check ---------------------------------------------------
+    DetailPrint "Checking available disk space..."
+    ${GetRoot} "$INSTDIR" $R0
+    ${DriveSpace} "$R0" "/D=F /S=M" $R1   ; free space in MB
+
+    ${If} $R1 < 600
+        MessageBox MB_ICONSTOP "Not enough disk space.$\nTranscrire needs at least 600 MB free on $R0$\nAvailable: $R1 MB$\n$\nPlease free up space and run the installer again."
+        Abort
+    ${EndIf}
+
+    ; -- Integrity checks -----------------------------------------------------
     DetailPrint "Verifying installer integrity..."
-    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe"  "04745F1E"
-    !insertmacro CheckFileHash "$EXEDIR\files\ffprobe.exe" "04745F1E"
+    !insertmacro CheckFileHash "$EXEDIR\files\ffmpeg.exe" "b366ee790df14a21f3cc2df750e8fb31"
 
     ; -- ffmpeg ----------------------------------------------------------------
     DetailPrint "Installing ffmpeg..."
     CreateDirectory "$INSTDIR\bin"
-    File "/oname=$INSTDIR\bin\ffmpeg.exe"  "files\ffmpeg.exe"
-    File "/oname=$INSTDIR\bin\ffprobe.exe" "files\ffprobe.exe"
+    File "/oname=$INSTDIR\bin\ffmpeg.exe" "files\ffmpeg.exe"
 
     ; Add ffmpeg to system PATH
     EnVar::SetHKLM
@@ -123,8 +166,9 @@ Section "Transcrire" SEC_MAIN
 
     ; -- Pre-built venv --------------------------------------------------------
     DetailPrint "Installing Python environment (no internet required)..."
-    File /r "venv_dist"
-    Rename "$INSTDIR\venv_dist" "$INSTDIR\.venv"
+    SetOutPath "$INSTDIR\.venv"
+    File /r "venv_dist\*.*"
+    SetOutPath "$INSTDIR"
 
     ; Rewrite the venv's pyvenv.cfg to point to the new install location
     FileOpen $1 "$INSTDIR\.venv\pyvenv.cfg" w
@@ -134,12 +178,13 @@ Section "Transcrire" SEC_MAIN
     FileClose $1
 
     ; -- Write .env ------------------------------------------------------------
-    DetailPrint "Writing .env..."
-    FileOpen $1 "$INSTDIR\.env" w
-    FileWrite $1 "GROQ_API_KEY=$GroqKey$\r$\n"
-    FileWrite $1 "GEMINI_API_KEY=$GeminiKey$\r$\n"
-    FileWrite $1 "BASE_OUTPUT_DIR=$INSTDIR\output$\r$\n"
-    FileClose $1
+        DetailPrint "Writing .env..."
+        CreateDirectory "$DOCUMENTS\Transcrire"
+        FileOpen $1 "$INSTDIR\.env" w
+        FileWrite $1 "GROQ_API_KEY=$GroqKey$\r$\n"
+        FileWrite $1 "GEMINI_API_KEY=$GeminiKey$\r$\n"
+        FileWrite $1 "BASE_OUTPUT_DIR=$DOCUMENTS\Transcrire$\r$\n"
+        FileClose $1
 
     ; -- transcrire.cmd launcher -----------------------------------------------
     DetailPrint "Creating launcher..."
