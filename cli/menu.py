@@ -1,6 +1,7 @@
 import typer
 from rich.console import Console
-from rich.table import Table
+from rich.text import Text
+from rich.align import Align
 
 from storage.db import init_db
 from storage import episodes as ep_store
@@ -19,16 +20,14 @@ import datetime
 
 console = Console()
 
-MAX_RETRIES = 3
-
-STAGE_ORDER = ["fetch", "transcribe", "captions"]
-
+MAX_RETRIES  = 3
+BLOCK_WIDTH  = 44          # width of the centred content block
+STAGE_ORDER  = ["fetch", "transcribe", "captions"]
 STAGE_LABELS = {
     "fetch":      "Fetch audio + cover art",
     "transcribe": "Transcribe",
     "captions":   "Generate captions",
 }
-
 STAGE_RUNNERS = {
     "fetch":      stage_fetch,
     "transcribe": stage_transcribe,
@@ -36,17 +35,84 @@ STAGE_RUNNERS = {
 }
 
 
+# ── Layout helpers ────────────────────────────────────────────────────────────
+
+class _Block:
+    """
+    Accumulates lines of Rich markup, then prints them all as a single
+    centred block — so every line shares the same left edge.
+    """
+    def __init__(self):
+        self._lines: list[str] = []
+
+    def add(self, markup: str = "") -> "_Block":
+        self._lines.append(markup)
+        return self
+
+    def flush(self) -> None:
+        if not self._lines:
+            return
+        combined = Text()
+        for i, markup in enumerate(self._lines):
+            combined.append_text(Text.from_markup(markup))
+            if i < len(self._lines) - 1:
+                combined.append("\n")
+        console.print(Align.center(combined))
+        self._lines.clear()
+
+
+def _print_line(markup: str = "") -> None:
+    """Print a single line centred by its own width (for short status messages)."""
+    console.print(Align.center(Text.from_markup(markup)))
+
+
+def _print_block(*lines: str) -> None:
+    """
+    Print multiple lines as a single centred block — all lines share
+    the same left edge, left-aligned within the block.
+    Pad every line to BLOCK_WIDTH so the block has a consistent width.
+    """
+    combined = Text()
+    for i, markup in enumerate(lines):
+        t = Text.from_markup(markup)
+        # Pad plain-text length to BLOCK_WIDTH so all lines are the same width
+        plain_len = len(t.plain)
+        if plain_len < BLOCK_WIDTH:
+            t.append(" " * (BLOCK_WIDTH - plain_len))
+        combined.append_text(t)
+        if i < len(lines) - 1:
+            combined.append("\n")
+    console.print(Align.center(combined))
+
+
+def _print_divider() -> None:
+    _print_line("[dim]" + "-" * BLOCK_WIDTH + "[/dim]")
+
+
+def _blank() -> None:
+    console.print()
+
+
+def _stage_line(number: int, label: str, status: StageStatus | None) -> Text:
+    """Render a stage row with colour-coded label."""
+    if status == StageStatus.SUCCESS:
+        colour = "green"
+    elif status == StageStatus.FAILED:
+        colour = "red"
+    else:
+        colour = "dark_orange"
+
+    t = Text()
+    t.append(f"{number}.  ", style="bold cyan")
+    t.append(label, style=colour)
+    return t
+
+
 # ── Error formatting ──────────────────────────────────────────────────────────
 
 def _friendly_error_message(error: Exception) -> str:
-    """
-    Unwrap tenacity's RetryError to surface the actual underlying exception,
-    and return its message directly if it's a known, user-friendly error type
-    (e.g. GeminiQuotaExceeded). Falls back to a generic message otherwise.
-    """
-    from services.gemini import GeminiQuotaExceeded
+    from services.gemini import GeminiQuotaExceeded, GeminiUnavailable
 
-    # tenacity.RetryError wraps a concurrent.futures.Future in last_attempt
     last_attempt = getattr(error, "last_attempt", None)
     if last_attempt is not None:
         try:
@@ -56,7 +122,7 @@ def _friendly_error_message(error: Exception) -> str:
         if underlying is not None:
             error = underlying
 
-    if isinstance(error, GeminiQuotaExceeded):
+    if isinstance(error, (GeminiQuotaExceeded, GeminiUnavailable)):
         return str(error)
 
     return str(error) or error.__class__.__name__
@@ -69,14 +135,21 @@ def run_menu() -> None:
 
     while True:
         _print_header()
-        console.print("  [cyan]1.[/cyan]  Podcast RSS feed")
-        console.print("  [cyan]2.[/cyan]  Upload from PC  [dim](transcription only)[/dim]")
-        console.print("  [cyan]0.[/cyan]  Exit\n")
+        _print_block(
+            "[bold cyan]1.[/bold cyan]  Podcast RSS feed",
+            "[bold cyan]2.[/bold cyan]  Upload from PC  [dim](transcription only)[/dim]",
+        )
+        _print_divider()
+        _print_block("[bold cyan]0.[/bold cyan]  Exit")
+        _blank()
 
-        choice = typer.prompt("Select", default="0")
+        choice = typer.prompt(
+            typer.style("     Select source", fg=typer.colors.CYAN),
+            default="0"
+        )
 
         if choice == "0":
-            console.print("\nGoodbye! 👋")
+            _print_line("Goodbye!")
             raise typer.Exit()
         elif choice == "1":
             episode = _select_episode()
@@ -85,68 +158,51 @@ def run_menu() -> None:
         elif choice == "2":
             _pc_upload_flow()
         else:
-            console.print("[yellow]Invalid choice.[/yellow]")
+            _print_line("[yellow]Invalid choice.[/yellow]")
 
 
 # ── Episode selection ─────────────────────────────────────────────────────────
-def _pc_upload_flow() -> None:
-    """Pick a local audio file and transcribe it directly."""
-    console.print("\n  Opening file picker...")
-    try:
-        audio_path = pick_file_dialog()
-    except RuntimeError as e:
-        console.print(f"  [red]{e}[/red]")
-        return
-
-    if not audio_path:
-        console.print("  [yellow]No file selected.[/yellow]")
-        return
-
-    console.print(f"  [cyan]Selected:[/cyan] {audio_path}")
-
-    diarize = typer.confirm("  Enable speaker labelling (diarization)?", default=False)
-
-    console.print("\n  [bold]Transcribing...[/bold]")
-    try:
-        paths = stage_transcribe_pc(audio_path, diarize=diarize)
-        console.print(f"\n  [green]✅ Done.[/green]")
-        for label, path in paths.items():
-            console.print(f"     {label}: {path}")
-    except Exception as e:
-        console.print(f"\n  [red]❌ Transcription failed:[/red] {_friendly_error_message(e)}")
-
-    typer.prompt("\n  Press Enter to return to menu", default="")
-
-
 
 def _select_episode() -> Episode | None:
     episodes = list_episodes()
-
     _print_header()
 
     if not episodes:
-        console.print("  No episodes yet.\n")
-        console.print("  [cyan]1.[/cyan]  Load a podcast feed")
-        console.print("  [cyan]0.[/cyan]  Exit\n")
-        choice = typer.prompt("Select", default="0")
+        _print_line("No episodes yet.")
+        _blank()
+        _print_block("[bold cyan]1.[/bold cyan]  Load a podcast feed")
+        _print_divider()
+        _print_block("[bold cyan]0.[/bold cyan]  Exit")
+        _blank()
+        choice = typer.prompt(
+            typer.style("     Select", fg=typer.colors.CYAN), default="0"
+        )
         if choice == "1":
             return _fetch_new_episode()
         return None
 
-    console.print(f"  [bold]{len(episodes)} episode(s) in library:[/bold]\n")
+    _print_line(f"[bold]{len(episodes)} episode(s) in library[/bold]")
+    _blank()
+    episode_lines = []
     for i, ep in enumerate(episodes, 1):
-        results  = get_all_stage_results(ep.id)
+        results     = get_all_stage_results(ep.id)
         stages_done = sum(
             1 for s in STAGE_ORDER
             if results.get(s) and results[s].status == StageStatus.SUCCESS
         )
-        bar = f"{stages_done}/{len(STAGE_ORDER)} stages"
-        console.print(f"  [cyan]{i}.[/cyan]  {ep.title[:50]}  [dim]({bar})[/dim]")
+        label = f"{ep.title[:36]}{'...' if len(ep.title) > 36 else ''}"
+        bar   = f"{stages_done}/{len(STAGE_ORDER)}"
+        episode_lines.append(f"[bold cyan]{i}.[/bold cyan]  {label}  [dim]({bar})[/dim]")
+    _print_block(*episode_lines)
+    _blank()
+    _print_block("[bold cyan]N.[/bold cyan]  Load a new episode")
+    _print_divider()
+    _print_block("[bold cyan]0.[/bold cyan]  Back")
+    _blank()
 
-    console.print(f"\n  [cyan]N.[/cyan]  Load a new episode")
-    console.print(f"  [cyan]0.[/cyan]  Exit\n")
-
-    choice = typer.prompt("Select episode", default="0")
+    choice = typer.prompt(
+        typer.style("     Select episode", fg=typer.colors.CYAN), default="0"
+    )
 
     if choice == "0":
         return None
@@ -155,31 +211,40 @@ def _select_episode() -> Episode | None:
     if choice.isdigit() and 1 <= int(choice) <= len(episodes):
         return episodes[int(choice) - 1]
 
-    console.print("[yellow]Invalid choice.[/yellow]")
+    _print_line("[yellow]Invalid choice.[/yellow]")
     return _select_episode()
 
 
 def _fetch_new_episode() -> Episode | None:
-    feed_url = typer.prompt("\n  Paste RSS feed URL")
-    console.print("\n  Fetching feed...")
+    _blank()
+    feed_url = typer.prompt("     Paste RSS feed URL")
+    _print_line("Fetching feed...")
 
     try:
         feed = load_feed(feed_url)
     except Exception as e:
-        console.print(f"  [red]Could not load feed: {e}[/red]")
+        _print_line(f"[red]Could not load feed: {e}[/red]")
         return None
 
     new_entries = check_new_episodes(feed)
     if not new_entries:
-        console.print("  [green]No new episodes found.[/green]")
+        _print_line("[green]No new episodes found.[/green]")
         return None
 
-    console.print(f"\n  [bold]{len(new_entries)} new episode(s):[/bold]\n")
+    _blank()
+    _print_line(f"[bold]{len(new_entries)} new episode(s)[/bold]")
+    _blank()
+    entry_lines = []
     for i, entry in enumerate(new_entries, 1):
-        console.print(f"  [cyan]{i}.[/cyan]  {entry.get('title', 'Untitled')}")
-
-    console.print("  [cyan]0.[/cyan]  Cancel\n")
-    choice = typer.prompt("  Select episode", default="0")
+        title = entry.get('title', 'Untitled')
+        entry_lines.append(f"[bold cyan]{i}.[/bold cyan]  {title[:36]}{'...' if len(title) > 36 else ''}")
+    _print_block(*entry_lines)
+    _blank()
+    _print_block("[bold cyan]0.[/bold cyan]  Cancel")
+    _blank()
+    choice = typer.prompt(
+        typer.style("     Select episode", fg=typer.colors.CYAN), default="0"
+    )
 
     if not choice.isdigit() or int(choice) == 0 or int(choice) > len(new_entries):
         return None
@@ -201,12 +266,12 @@ def _fetch_new_episode() -> Episode | None:
     )
 
     if not ep.audio_url:
-        console.print("  [red]No audio URL found for this episode.[/red]")
+        _print_line("[red]No audio URL found for this episode.[/red]")
         return None
 
     ep_id = ep_store.insert_episode(ep)
     ep.id = ep_id
-    console.print(f"\n  [green]Episode saved:[/green] {title}")
+    _print_line(f"[green]Episode saved:[/green] {title[:30]}{'...' if len(title) > 30 else ''}")
     return ep
 
 
@@ -214,12 +279,10 @@ def _fetch_new_episode() -> Episode | None:
 
 def _episode_loop(episode: Episode) -> None:
     while True:
-        results  = get_all_stage_results(episode.id)
-        is_fresh = "fetch" not in results
-
+        results   = get_all_stage_results(episode.id)
+        is_fresh  = "fetch" not in results
         platforms = _get_or_prompt_platforms(episode, results)
-
-        config = PipelineConfig(
+        config    = PipelineConfig(
             episode_id=episode.id,
             selected_platforms=platforms,
         )
@@ -227,24 +290,27 @@ def _episode_loop(episode: Episode) -> None:
         _print_episode_menu(episode, results)
 
         if is_fresh:
-            # Auto-advance through all incomplete stages
             advanced = _auto_advance(episode, config, results)
-            if not advanced:
-                # All stages done or failed — fall through to manual menu
-                pass
-            else:
+            if advanced:
                 continue
 
-        # Manual mode — prompt user
-        console.print("\n  [cyan]R.[/cyan]  Re-run a stage")
-        console.print("  [cyan]H.[/cyan]  View stage history")
-        console.print("  [cyan]B.[/cyan]  Back to episode list")
-        console.print("  [cyan]0.[/cyan]  Exit\n")
+        _print_block(
+            "[bold cyan]R.[/bold cyan]  Re-run a stage",
+            "[bold cyan]H.[/bold cyan]  View stage history",
+        )
+        _print_divider()
+        _print_block(
+            "[bold cyan]B.[/bold cyan]  Back to episode list",
+            "[bold cyan]0.[/bold cyan]  Exit",
+        )
+        _blank()
 
-        choice = typer.prompt("Select", default="B")
+        choice = typer.prompt(
+            typer.style("     Select", fg=typer.colors.CYAN), default="B"
+        )
 
         if choice == "0":
-            console.print("\nGoodbye! 👋")
+            _print_line("Goodbye!")
             raise typer.Exit()
         elif choice.upper() == "B":
             return
@@ -256,72 +322,65 @@ def _episode_loop(episode: Episode) -> None:
             stage = STAGE_ORDER[int(choice) - 1]
             _run_stage_with_retry(episode, config, stage)
         else:
-            console.print("[yellow]Invalid choice.[/yellow]")
+            _print_line("[yellow]Invalid choice.[/yellow]")
 
 
 def _auto_advance(episode: Episode, config: PipelineConfig, results: dict) -> bool:
-    """Run all pending stages in sequence. Returns True if any stage was attempted."""
     attempted = False
-
     for stage in STAGE_ORDER:
         existing = results.get(stage)
         if existing and existing.status == StageStatus.SUCCESS:
-            continue  # already done
-
+            continue
         attempted = True
-        success = _run_stage_with_retry(episode, config, stage)
-
+        success   = _run_stage_with_retry(episode, config, stage)
         if not success:
-            console.print(f"\n  [red]Stopping auto-advance — {stage} failed after {MAX_RETRIES} attempts.[/red]")
+            _print_line(f"[red]Auto-advance stopped — {stage} failed after {MAX_RETRIES} attempts.[/red]")
             return attempted
-
-        # Refresh results after each stage
         results = get_all_stage_results(episode.id)
-
     return attempted
 
 
 def _run_stage_with_retry(episode: Episode, config: PipelineConfig, stage: str) -> bool:
-    """Run a stage with up to MAX_RETRIES attempts. Returns True on success."""
     runner = STAGE_RUNNERS[stage]
-
     for attempt in range(1, MAX_RETRIES + 1):
-        console.print(f"\n  [bold][{stage}][/bold] Starting... (attempt {attempt}/{MAX_RETRIES})")
+        _print_line(f"[bold]{stage.upper()}[/bold]  attempt {attempt}/{MAX_RETRIES}")
         try:
             result = runner(episode, config)
             if result.status == StageStatus.SUCCESS:
-                console.print(f"  [green]✅ {stage} complete.[/green]")
+                _print_line(f"[green]{stage} complete.[/green]")
                 return True
-            else:
-                raise RuntimeError(result.error or "Stage returned non-success status.")
+            raise RuntimeError(result.error or "Non-success status.")
         except Exception as e:
-            console.print(f"  [red]❌ {stage} failed:[/red] {_friendly_error_message(e)}")
+            _print_line(f"[red]{stage} failed:[/red] {_friendly_error_message(e)}")
             if attempt < MAX_RETRIES:
-                retry = typer.confirm(f"  Retry {stage}?", default=True)
+                retry = typer.confirm("     Retry?", default=True)
                 if not retry:
                     return False
             else:
-                console.print(f"  [red]Dropping back to menu after {MAX_RETRIES} failed attempts.[/red]")
-
+                _print_line(f"[red]Dropping back to menu after {MAX_RETRIES} failed attempts.[/red]")
     return False
 
 
 # ── Re-run menu ───────────────────────────────────────────────────────────────
 
 def _rerun_menu(episode: Episode, config: PipelineConfig) -> None:
-    console.print("\n  [bold]Which stage would you like to re-run?[/bold]\n")
-    for i, stage in enumerate(STAGE_ORDER, 1):
-        console.print(f"  [cyan]{i}.[/cyan]  {STAGE_LABELS[stage]}")
-    console.print("  [cyan]0.[/cyan]  Cancel\n")
+    _blank()
+    _print_line("[bold]Which stage would you like to re-run?[/bold]")
+    _blank()
+    _print_block(*[f"[bold cyan]{i}.[/bold cyan]  {STAGE_LABELS[s]}" for i, s in enumerate(STAGE_ORDER, 1)])
+    _blank()
+    _print_block("[bold cyan]0.[/bold cyan]  Cancel")
+    _blank()
 
-    choice = typer.prompt("Select", default="0")
+    choice = typer.prompt(
+        typer.style("     Select", fg=typer.colors.CYAN), default="0"
+    )
     if not choice.isdigit() or int(choice) == 0:
         return
 
     idx = int(choice) - 1
     if 0 <= idx < len(STAGE_ORDER):
-        stage = STAGE_ORDER[idx]
-        console.print(f"\n  Archiving previous {stage} output...")
+        stage    = STAGE_ORDER[idx]
         existing = ep_store.get_latest_stage_result(episode.id, stage)
         if existing and existing.output_path:
             from storage.archives import archive_stage_output
@@ -332,32 +391,65 @@ def _rerun_menu(episode: Episode, config: PipelineConfig) -> None:
 # ── History menu ──────────────────────────────────────────────────────────────
 
 def _history_menu(episode: Episode) -> None:
-    console.print("\n  [bold]Which stage history would you like to view?[/bold]\n")
-    for i, stage in enumerate(STAGE_ORDER, 1):
-        console.print(f"  [cyan]{i}.[/cyan]  {STAGE_LABELS[stage]}")
-    console.print("  [cyan]0.[/cyan]  Cancel\n")
+    _blank()
+    _print_line("[bold]Which stage history would you like to view?[/bold]")
+    _blank()
+    _print_block(*[f"[bold cyan]{i}.[/bold cyan]  {STAGE_LABELS[s]}" for i, s in enumerate(STAGE_ORDER, 1)])
+    _blank()
+    _print_block("[bold cyan]0.[/bold cyan]  Cancel")
+    _blank()
 
-    choice = typer.prompt("Select", default="0")
+    choice = typer.prompt(
+        typer.style("     Select", fg=typer.colors.CYAN), default="0"
+    )
     if not choice.isdigit() or int(choice) == 0:
         return
 
     idx = int(choice) - 1
     if 0 <= idx < len(STAGE_ORDER):
-        stage = STAGE_ORDER[idx]
+        stage    = STAGE_ORDER[idx]
         from storage.archives import list_archive_versions
         versions = list_archive_versions(episode.id, stage)
 
         if not versions:
-            console.print(f"  [yellow]No history for {stage}.[/yellow]")
+            _print_line(f"[yellow]No history for {stage}.[/yellow]")
             return
 
-        table = Table(title=f"{stage} history")
-        table.add_column("Version", style="cyan")
-        table.add_column("Archived at")
-        table.add_column("Path")
+        _blank()
+        _print_line(f"[bold]{stage} history[/bold]")
+        _blank()
         for v in versions:
-            table.add_row(str(v.version), v.created_at, str(v.archived_path))
-        console.print(table)
+            _print_line(f"v{v.version}  {v.created_at}  {v.archived_path}")
+
+
+# ── PC upload ─────────────────────────────────────────────────────────────────
+
+def _pc_upload_flow() -> None:
+    _print_line("Opening file picker...")
+    try:
+        audio_path = pick_file_dialog()
+    except RuntimeError as e:
+        _print_line(f"[red]{e}[/red]")
+        return
+
+    if not audio_path:
+        _print_line("[yellow]No file selected.[/yellow]")
+        return
+
+    _print_line(f"Selected: {str(audio_path)[:36]}{'...' if len(str(audio_path)) > 36 else ''}")
+    diarize = typer.confirm("     Enable speaker labelling (diarization)?", default=False)
+
+    _print_line("[bold]Transcribing...[/bold]")
+    try:
+        paths = stage_transcribe_pc(audio_path, diarize=diarize)
+        _print_line("[green]Done.[/green]")
+        for label, path in paths.items():
+            _print_line(f"{label}: {str(path)[:30]}...")
+    except Exception as e:
+        _print_line(f"[red]Transcription failed:[/red] {_friendly_error_message(e)}")
+
+    _blank()
+    typer.prompt("     Press Enter to return to menu", default="")
 
 
 # ── Platform selection ────────────────────────────────────────────────────────
@@ -368,12 +460,14 @@ def _get_or_prompt_platforms(episode: Episode, results: dict) -> list:
         slugs = cap_result.metadata["platforms"]
         return [p for p in PLATFORMS.values() if p.slug in slugs]
 
-    console.print("\n  [bold]Select platforms for caption generation:[/bold]\n")
+    _blank()
+    _print_line("[bold]Select platforms for caption generation[/bold]")
+    _blank()
     platform_list = list(PLATFORMS.values())
-    for i, p in enumerate(platform_list, 1):
-        console.print(f"  [cyan]{i}.[/cyan]  {p.name}")
+    _print_block(*[f"[bold cyan]{i}.[/bold cyan]  {p.name}" for i, p in enumerate(platform_list, 1)])
 
-    raw = typer.prompt("\n  Enter numbers separated by commas", default="1,2,3,4")
+    _blank()
+    raw = typer.prompt("     Enter numbers separated by commas", default="1,2,3,4")
     selected = []
     for part in raw.split(","):
         try:
@@ -388,24 +482,23 @@ def _get_or_prompt_platforms(episode: Episode, results: dict) -> list:
 # ── Display ───────────────────────────────────────────────────────────────────
 
 def _print_header() -> None:
-    console.print("\n" + "=" * 44)
-    console.print("           🎙️   TRANSCRIRE")
-    console.print("=" * 44 + "\n")
+    _blank()
+    _print_line("[bold]TRANSCRIRE[/bold]")
+    _print_divider()
+    _blank()
 
 
 def _print_episode_menu(episode: Episode, results: dict) -> None:
     _print_header()
-    short_title = episode.title[:46] + ("..." if len(episode.title) > 46 else "")
-    console.print(f"  [bold]{short_title}[/bold]\n")
+    short = episode.title[:46] + ("..." if len(episode.title) > 46 else "")
+    _print_line(f"[bold]{short}[/bold]")
+    _blank()
 
     for i, stage in enumerate(STAGE_ORDER, 1):
-        r = results.get(stage)
-        if r and r.status == StageStatus.SUCCESS:
-            icon = "[green]✅[/green]"
-        elif r and r.status == StageStatus.FAILED:
-            icon = "[red]❌[/red]"
-        else:
-            icon = "⬜"
-        console.print(f"  [cyan]{i}.[/cyan]  {icon}  {STAGE_LABELS[stage]}")
+        r      = results.get(stage)
+        status = r.status if r else None
+        console.print(Align.center(_stage_line(i, STAGE_LABELS[stage], status)))
 
-    console.print("\n" + "=" * 44)
+    _blank()
+    _print_divider()
+    _blank()
